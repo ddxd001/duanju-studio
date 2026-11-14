@@ -1,0 +1,18 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+release/
+
+# 运行生成的图片与日志
+public/generated/
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 本地环境
+.env
+.env.local
