@@ -692,7 +692,9 @@ const server = http.createServer(handleRequest)
 
 export const imageServer = server
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+const isMain =
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]).toLowerCase() === path.resolve(fileURLToPath(import.meta.url)).toLowerCase()
 if (isMain) {
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`[短剧工坊] 本地代理与媒体服务已启动: http://127.0.0.1:${PORT}`)
