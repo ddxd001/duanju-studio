@@ -1,5 +1,5 @@
-// 演示模式"成片":由 seed 决定的动态画面,模拟镜头运动 + 字幕
-import { useMemo } from 'react'
+// 演示模式"成片"与真实视频/图片展示组件
+import { useEffect, useMemo, useRef } from 'react'
 import { seededRandom } from '@/lib/prompt'
 import type { StylePreset } from '@/types'
 
@@ -11,16 +11,52 @@ interface Props {
   portrait?: boolean // 角色立绘模式
   playing?: boolean
   className?: string
-  videoUrl?: string // 本地模式:真实视频地址(存在时优先播放真视频)
+  videoUrl?: string // 真实视频地址(存在时优先播放真视频)
   imageUrl?: string // 生成的真实图片(存在时优先展示)
+  withAudio?: boolean // 放映厅开启原生音频与播放控制
+  loopVideo?: boolean // 放映厅连播时关闭循环,由 onVideoEnded 推进下一镜
+  onVideoEnded?: () => void
+  onVideoTimeUpdate?: (currentMs: number, durationMs: number) => void
 }
 
 const GLYPHS = ['山', '月', '剑', '雪', '城', '灯', '舟', '火', '风', '影']
 
-export default function MockClip({ seed, style, subtitle, label, portrait, playing = true, className, videoUrl, imageUrl }: Props) {
+export default function MockClip({
+  seed,
+  style,
+  subtitle,
+  label,
+  portrait,
+  playing = true,
+  className,
+  videoUrl,
+  imageUrl,
+  withAudio = false,
+  loopVideo = true,
+  onVideoEnded,
+  onVideoTimeUpdate,
+}: Props) {
+  const videoRef = useRef<HTMLVideoElement>(null)
   const rnd = useMemo(() => seededRandom(seed), [seed])
+  const conf = useMemo(() => {
+    const glyphs = Array.from({ length: portrait ? 1 : 3 }, () => GLYPHS[Math.floor(rnd() * GLYPHS.length)])
+    const positions = glyphs.map(() => ({ x: 15 + rnd() * 60, y: 18 + rnd() * 45, s: 0.9 + rnd() * 1.6 }))
+    const hueShift = Math.floor(rnd() * 40 - 20)
+    return { glyphs, positions, hueShift }
+  }, [rnd, portrait])
 
-  // 真实图片(角色设定图等)优先展示
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el || !videoUrl) return
+    if (playing) {
+      void el.play().catch(() => {
+        /* 浏览器自动播放策略阻止时由用户手动点播 */
+      })
+    } else {
+      el.pause()
+    }
+  }, [playing, videoUrl])
+
   if (imageUrl) {
     return (
       <div
@@ -37,7 +73,6 @@ export default function MockClip({ seed, style, subtitle, label, portrait, playi
     )
   }
 
-  // 本地模式拿到真实视频后,直接播放真视频(保留标签与字幕覆盖层)
   if (videoUrl) {
     return (
       <div
@@ -45,20 +80,28 @@ export default function MockClip({ seed, style, subtitle, label, portrait, playi
         style={{ aspectRatio: portrait ? '3/4' : '9/16' }}
       >
         <video
+          ref={videoRef}
           src={videoUrl}
-          className="h-full w-full object-cover"
+          className={`h-full w-full object-cover ${withAudio ? 'pb-8' : ''}`}
           autoPlay={playing}
-          loop
-          muted
+          loop={loopVideo}
+          muted={!withAudio}
           playsInline
-          controls={false}
+          controls={withAudio}
+          onEnded={onVideoEnded}
+          onTimeUpdate={(e) => {
+            const el = e.currentTarget
+            if (onVideoTimeUpdate && Number.isFinite(el.duration) && el.duration > 0) {
+              onVideoTimeUpdate(el.currentTime * 1000, el.duration * 1000)
+            }
+          }}
         />
         {label && (
           <div className="absolute left-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/85 backdrop-blur">
             {label}
           </div>
         )}
-        {subtitle && (
+        {subtitle && !withAudio && (
           <div className="absolute inset-x-2 bottom-2 rounded bg-black/60 px-2 py-1 text-center text-[11px] leading-4 text-white backdrop-blur">
             {subtitle}
           </div>
@@ -66,13 +109,6 @@ export default function MockClip({ seed, style, subtitle, label, portrait, playi
       </div>
     )
   }
-  const conf = useMemo(() => {
-    const glyphs = Array.from({ length: portrait ? 1 : 3 }, () => GLYPHS[Math.floor(rnd() * GLYPHS.length)])
-    const positions = glyphs.map(() => ({ x: 15 + rnd() * 60, y: 18 + rnd() * 45, s: 0.9 + rnd() * 1.6 }))
-    const pan = rnd() > 0.5 ? 'pan-left' : 'pan-right'
-    const hueShift = Math.floor(rnd() * 40 - 20)
-    return { glyphs, positions, pan, hueShift }
-  }, [rnd, portrait])
 
   const [c1, c2, c3] = style.palette
   const dur = 6 + (seed % 3)
@@ -82,7 +118,6 @@ export default function MockClip({ seed, style, subtitle, label, portrait, playi
       className={`relative overflow-hidden rounded-lg bg-black ${className ?? ''}`}
       style={{ aspectRatio: portrait ? '3/4' : '9/16' }}
     >
-      {/* 背景氛围 */}
       <div
         className="absolute inset-[-20%]"
         style={{
@@ -91,11 +126,10 @@ export default function MockClip({ seed, style, subtitle, label, portrait, playi
           animation: playing ? `mockpan ${dur}s ease-in-out infinite alternate` : undefined,
         }}
       />
-      {/* 场景字形(模拟画面主体) */}
       {conf.glyphs.map((g, i) => (
         <span
           key={i}
-          className="absolute font-serif text-white/25 select-none"
+          className="absolute select-none font-serif text-white/25"
           style={{
             left: `${conf.positions[i].x}%`,
             top: `${conf.positions[i].y}%`,
@@ -107,18 +141,15 @@ export default function MockClip({ seed, style, subtitle, label, portrait, playi
           {g}
         </span>
       ))}
-      {/* 光束 */}
       <div
         className="absolute inset-x-0 top-0 h-1/2 opacity-30"
         style={{ background: `linear-gradient(180deg, ${c1}55, transparent)` }}
       />
-      {/* 标签 */}
       {label && (
         <div className="absolute left-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/85 backdrop-blur">
           {label}
         </div>
       )}
-      {/* 字幕条 */}
       {subtitle && (
         <div className="absolute inset-x-2 bottom-2 rounded bg-black/60 px-2 py-1 text-center text-[11px] leading-4 text-white backdrop-blur">
           {subtitle}

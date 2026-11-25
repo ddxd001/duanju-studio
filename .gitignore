@@ -5,14 +5,23 @@ node_modules/
 dist/
 release/
 
-# 运行生成的图片与日志
+# 运行生成的图片、缓存视频与日志
 public/generated/
+public/models/
+template-info.md
 *.log
+
+# 临时集成测试产物与 Python 缓存
+build/test-media.mp4
+build/test-pids.json
+build/mock-report.json
+__pycache__/
+*.pyc
 
 # 系统文件
 .DS_Store
 Thumbs.db
 
-# 本地环境
+# 本地环境与密钥
 .env
 .env.local

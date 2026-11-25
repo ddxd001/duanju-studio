@@ -20,8 +20,9 @@ export interface Version {
   autoFix: string[] // 系统自动追加的修正项说明
   seed: number
   createdAt: number
-  videoUrl?: string // 本地模式:ComfyUI 产出的真实视频地址
+  videoUrl?: string // ComfyUI / MiniMax 产出的真实视频地址
   imageUrl?: string // 生成的真实图片(角色设定图/立绘)
+  refCharacters?: string[] // 本次视频生成实际注入的参考图角色名
 }
 
 export interface Shot {
@@ -38,8 +39,8 @@ export interface Shot {
   progress: number // 渲染进度 0-100
   versions: Version[]
   currentVersionId: string | null
-  comfyPromptId?: string // 本地模式:已提交到 ComfyUI 的任务 ID
-  renderError?: string // 本地模式:渲染失败原因
+  comfyPromptId?: string // 本地 ComfyUI 或 MiniMax 云端任务 ID
+  renderError?: string // 渲染失败原因
 }
 
 export interface Episode {
@@ -67,7 +68,7 @@ export interface Character {
   status: CharStatus
   versions: Version[] // 立绘版本,与分镜共用反馈机制
   currentVersionId: string | null
-  comfyPromptId?: string // 本地模式:已提交的 ComfyUI 任务
+  comfyPromptId?: string // 已提交的生图任务 ID
   renderError?: string
 }
 
@@ -80,9 +81,21 @@ export interface StylePreset {
 }
 
 export interface Settings {
-  mode: 'demo' | 'local' // demo=内置演示生成;local=接本地 ComfyUI/LLM
+  mode: 'demo' | 'local' // demo=内置演示生成;local=真实视频/LLM 生成
+  videoProvider: 'comfy' | 'minimax' // 视频:本地 ComfyUI 或 MiniMax 云端 H3
   comfyUrl: string
-  workflowTemplate: string // 视频:ComfyUI API 格式工作流(含 {{prompt}} 等占位符)
+  comfyWorkflowMode: 'minimax-h3-auto' | 'custom' // 内置本地 MiniMax-H3(自动T2VA/Ref2VA)或自定义模板
+  comfyRefImageSize: 'match' | 'max' // H3 Ref2VA 参考图缩放策略(match 更省显存)
+  comfyH3Steps: number // H3 4步蒸馏模型采样步数(默认 4)
+  comfyH3Unet: string
+  comfyH3Clip: string
+  comfyH3VideoVae: string
+  comfyH3AudioVae: string
+  workflowTemplate: string // 视频:自定义 ComfyUI API 格式工作流(含 {{prompt}} 等占位符)
+  minimaxApiBase: string
+  minimaxApiKey: string
+  minimaxModel: string
+  minimaxGenerateAudio: boolean
   imageProvider: 'builtin' | 'comfy' | 'cloudapi' // 立绘生成渠道
   imageWorkflowTemplate: string // 立绘:ComfyUI 生图工作流(API JSON + 占位符)
   imageApiBase: string // 立绘:OpenAI 兼容图像接口
@@ -94,10 +107,11 @@ export interface Settings {
   resolution: string
   steps: number
   renderSecondsPerShot: number // 演示模式下单个镜头耗时(秒)
-  autoFix: boolean // AI 自动微调:反馈命中规则时自动改提示词
+  autoFix: boolean // AI 自动微调:反馈命中规则或 LLM 改写提示词
 }
 
 export interface Project {
+  id: string
   title: string
   novelText: string
   styleId: string
@@ -108,4 +122,5 @@ export interface Project {
   episodes: Episode[]
   characters: Character[]
   shots: Shot[]
+  updatedAt: number
 }

@@ -1,4 +1,4 @@
-// ⑤ 试拍与批量渲染:先试拍一段锁画风,满意后再批量开拍
+// ⑤ 试拍与批量渲染:先试拍一段锁画风,满意后再批量开拍(支持队列暂停与单任务取消)
 import { useState } from 'react'
 import { useStore, getStyle } from '@/lib/store'
 import MockClip from '@/components/MockClip'
@@ -6,14 +6,17 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
-import { Check, Film, Layers, Loader2, Lock, Info } from 'lucide-react'
+import { Check, Film, Layers, Loader2, Lock, Info, Pause, Play, X } from 'lucide-react'
 import { EmptyHint } from './ScriptPage'
 
 export default function RenderPage() {
   const {
     project,
     settings,
+    queuePaused,
     renderShot,
+    cancelShot,
+    toggleQueuePaused,
     approveStyle,
     restyleUnapproved,
     queueAllPending,
@@ -32,9 +35,10 @@ export default function RenderPage() {
   const pending = project.shots.filter((s) => s.status === 'draft' || s.status === 'review')
   const approved = project.shots.filter((s) => s.status === 'approved')
 
-  // 真实硬件下的耗时估算(按零度实测:12G 显存 480p 每 5 秒片段约 5 分钟)
   const estMinutes =
-    settings.mode === 'local' ? Math.round((pending.length * 5 * (settings.resolution.startsWith('720') ? 1.8 : 1)) ) : Math.round((pending.length * settings.renderSecondsPerShot) / 60)
+    settings.mode === 'local' && settings.videoProvider === 'comfy'
+      ? Math.round(pending.length * 3 * (settings.resolution.startsWith('7') ? 1.5 : 1))
+      : Math.round((pending.length * settings.renderSecondsPerShot) / 60)
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
@@ -70,7 +74,7 @@ export default function RenderPage() {
               />
             ) : (
               <button
-                onClick={() => renderShot(sampleShot.id)}
+                onClick={() => void renderShot(sampleShot.id)}
                 className="flex aspect-[9/16] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-white/20 text-white/40 hover:border-violet-500/50 hover:text-violet-300"
               >
                 <Film className="h-6 w-6" />
@@ -80,6 +84,11 @@ export default function RenderPage() {
             {sampleShot.status === 'rendering' && (
               <div className="mt-2 flex items-center gap-2 text-xs text-amber-300">
                 <Loader2 className="h-3 w-3 animate-spin" /> 渲染中 {Math.floor(sampleShot.progress)}%
+              </div>
+            )}
+            {sampleShot.renderError && (
+              <div className="mt-2 rounded bg-red-500/10 p-1.5 text-[11px] text-red-300">
+                {sampleShot.renderError}
               </div>
             )}
           </div>
@@ -135,11 +144,29 @@ export default function RenderPage() {
           <h3 className="flex items-center gap-2 text-lg font-semibold">
             <Layers className="h-5 w-5 text-violet-400" /> 第二步:批量生成
           </h3>
+          {queued.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-auto border-white/15 text-xs text-white/75"
+              onClick={toggleQueuePaused}
+            >
+              {queuePaused ? (
+                <>
+                  <Play className="mr-1 h-3.5 w-3.5" /> 继续队列
+                </>
+              ) : (
+                <>
+                  <Pause className="mr-1 h-3.5 w-3.5" /> 暂停后续派发
+                </>
+              )}
+            </Button>
+          )}
         </div>
 
         <div className="mb-4 grid grid-cols-3 gap-3 text-center">
           <Stat label="待拍摄" value={pending.length} cls="text-white" />
-          <Stat label="渲染中" value={queued.length} cls="text-amber-300" />
+          <Stat label="队列中" value={queued.length} cls="text-amber-300" />
           <Stat label="已通过" value={approved.length} cls="text-emerald-300" />
         </div>
 
@@ -162,7 +189,9 @@ export default function RenderPage() {
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {settings.mode === 'demo'
               ? `演示模式预计 ${Math.max(1, estMinutes)} 分钟跑完。`
-              : `本地 H3 渲染预计约 ${estMinutes} 分钟(按 12G 显存实测估算,建议挂机运行)。渲染期间可随时回分镜板检查已完成的镜头。`}
+              : settings.videoProvider === 'minimax'
+                ? 'MiniMax 云端将按镜头依次创建任务,耗时取决于平台队列并会产生平台费用。完成后成片自动缓存到本机。'
+                : `本地 ComfyUI MiniMax-H3 预计约 ${Math.max(1, estMinutes)} 分钟(RTX 5080 16GB / 4步 SLA 估算)。出镜角色如有设定图将自动以 Ref2VA 锁脸。`}
           </div>
         )}
 
@@ -171,11 +200,18 @@ export default function RenderPage() {
           <div className="mt-4 space-y-2">
             {queued.map((sh) => (
               <div key={sh.id} className="flex items-center gap-3 rounded-lg bg-black/30 px-3 py-2">
-                <span className="w-24 truncate text-xs text-white/60">镜头 {sh.index} · {sh.title}</span>
+                <span className="w-28 truncate text-xs text-white/60">镜头 {sh.index} · {sh.title}</span>
                 <Progress value={sh.status === 'queued' ? 0 : sh.progress} className="h-1.5 flex-1" />
-                <span className="w-16 text-right text-[10px] text-white/40">
+                <span className="w-14 text-right text-[10px] text-white/40">
                   {sh.status === 'queued' ? '排队中' : `${Math.floor(sh.progress)}%`}
                 </span>
+                <button
+                  onClick={() => cancelShot(sh.id)}
+                  className="text-white/35 hover:text-red-400"
+                  title="取消此任务"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               </div>
             ))}
           </div>

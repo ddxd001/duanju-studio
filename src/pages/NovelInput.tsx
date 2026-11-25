@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Sparkles, ArrowRight, FileText } from 'lucide-react'
 
 export default function NovelInput() {
-  const { project, setNovelInfo, applySample, adaptScript, setStep } = useStore()
+  const { project, setNovelInfo, applySample, adaptScript, setStep, adapting, adaptError } = useStore()
 
   const canAdapt = project.novelText.trim().length >= 50
 
@@ -127,16 +127,18 @@ export default function NovelInput() {
           </div>
 
           <Button
-            disabled={!canAdapt}
-            onClick={() => {
-              adaptScript()
-              setStep('script')
+            disabled={!canAdapt || adapting}
+            onClick={async () => {
+              await adaptScript()
+              if (!useStore.getState().adaptError) setStep('script')
             }}
             className="w-full bg-violet-600 py-5 text-base hover:bg-violet-500"
           >
-            <Sparkles className="mr-2 h-4 w-4" /> 开始改编剧本 <ArrowRight className="ml-1 h-4 w-4" />
+            <Sparkles className={`mr-2 h-4 w-4 ${adapting ? 'animate-pulse' : ''}`} />
+            {adapting ? 'AI 正在改编…' : '开始改编剧本'} {!adapting && <ArrowRight className="ml-1 h-4 w-4" />}
           </Button>
-          {!canAdapt && (
+          {adaptError && <p className="rounded bg-red-500/10 p-2 text-xs leading-5 text-red-300">{adaptError}</p>}
+          {!canAdapt && !adaptError && (
             <p className="text-center text-xs text-white/30">至少输入 50 字才能改编</p>
           )}
         </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '@/lib/store'
 import type { StepId } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -29,7 +29,10 @@ import {
   Film,
   Play,
   Settings as SettingsIcon,
-  RotateCcw,
+  Plus,
+  Trash2,
+  Download,
+  Upload,
 } from 'lucide-react'
 import NovelInput from '@/pages/NovelInput'
 import ScriptPage from '@/pages/ScriptPage'
@@ -37,7 +40,7 @@ import CharactersPage from '@/pages/CharactersPage'
 import StoryboardPage from '@/pages/StoryboardPage'
 import RenderPage from '@/pages/RenderPage'
 import TheaterPage from '@/pages/TheaterPage'
-import { pingComfy } from '@/lib/engine'
+import { pingComfy, checkMiniMaxConfig, pingLlm } from '@/lib/engine'
 
 const STEPS: { id: StepId; name: string; icon: typeof BookOpen }[] = [
   { id: 'novel', name: '小说输入', icon: BookOpen },
@@ -49,7 +52,22 @@ const STEPS: { id: StepId; name: string; icon: typeof BookOpen }[] = [
 ]
 
 export default function App() {
-  const { step, setStep, project, settings, tick, resetAll } = useStore()
+  const {
+    step,
+    setStep,
+    project,
+    projects,
+    activeProjectId,
+    settings,
+    tick,
+    createProject,
+    switchProject,
+    deleteProject,
+    exportProjectJson,
+    importProjectJson,
+  } = useStore()
+  const importRef = useRef<HTMLInputElement>(null)
+  const [importMsg, setImportMsg] = useState('')
 
   useEffect(() => {
     document.documentElement.classList.add('dark')
@@ -60,6 +78,17 @@ export default function App() {
     const t = setInterval(() => tick(500), 500)
     return () => clearInterval(t)
   }, [tick])
+
+  const onExportProject = () => {
+    const json = exportProjectJson()
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${project.title.replace(/[\\/:*?"<>|]/g, '_') || 'duanju-project'}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="flex h-screen bg-[#0a0a12] text-white">
@@ -102,8 +131,21 @@ export default function App() {
 
       {/* 主区域 */}
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-white/10 px-5 py-3">
-          <h1 className="truncate text-sm font-medium">{project.title}</h1>
+        <header className="flex flex-wrap items-center gap-2.5 border-b border-white/10 px-5 py-2.5">
+          {/* 多项目切换 */}
+          <Select value={activeProjectId} onValueChange={switchProject}>
+            <SelectTrigger className="h-8 w-44 border-white/10 bg-white/5 text-xs">
+              <SelectValue placeholder="选择项目" />
+            </SelectTrigger>
+            <SelectContent>
+              {projects.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <Badge
             variant="outline"
             className={`text-[10px] ${
@@ -112,24 +154,75 @@ export default function App() {
                 : 'border-emerald-500/40 text-emerald-300'
             }`}
           >
-            {settings.mode === 'demo' ? '演示模式' : '本地生成'}
+            {settings.mode === 'demo'
+              ? '演示模式'
+              : settings.videoProvider === 'minimax'
+                ? '真实生成 · MiniMax 云端 H3'
+                : settings.comfyWorkflowMode === 'minimax-h3-auto'
+                  ? '真实生成 · ComfyUI MiniMax-H3'
+                  : '真实生成 · ComfyUI 自定义'}
           </Badge>
           {project.styleApproved && (
             <Badge variant="outline" className="border-violet-500/40 text-[10px] text-violet-300">
               画风已锁定
             </Badge>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          {importMsg && <span className="text-[11px] text-emerald-300/80">{importMsg}</span>}
+
+          <div className="ml-auto flex items-center gap-1.5">
+            <input
+              ref={importRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                const res = importProjectJson(await file.text())
+                setImportMsg(res.detail)
+                setTimeout(() => setImportMsg(''), 3500)
+                e.target.value = ''
+              }}
+            />
             <Button
               variant="ghost"
               size="sm"
-              className="text-white/50 hover:text-white"
-              onClick={() => {
-                if (confirm('确定清空当前项目并重新开始?')) resetAll()
-              }}
+              className="h-8 px-2 text-xs text-white/55 hover:text-white"
+              onClick={onExportProject}
+              title="导出当前项目为 JSON 备份"
             >
-              <RotateCcw className="mr-1 h-3.5 w-3.5" /> 新项目
+              <Download className="mr-1 h-3.5 w-3.5" /> 备份
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs text-white/55 hover:text-white"
+              onClick={() => importRef.current?.click()}
+              title="从 JSON 导入项目"
+            >
+              <Upload className="mr-1 h-3.5 w-3.5" /> 导入
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs text-white/60 hover:text-white"
+              onClick={() => createProject()}
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" /> 新项目
+            </Button>
+            {projects.length > 1 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs text-white/40 hover:text-red-400"
+                onClick={() => {
+                  if (confirm(`确定删除项目「${project.title}」?`)) deleteProject(project.id)
+                }}
+                title="删除当前项目"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -148,6 +241,8 @@ export default function App() {
 function SettingsDialog() {
   const { settings, setSettings } = useStore()
   const [ping, setPing] = useState<string>('')
+  const [llmPing, setLlmPing] = useState<string>('')
+  const [showAdvancedH3, setShowAdvancedH3] = useState(false)
 
   return (
     <Dialog>
@@ -156,7 +251,7 @@ function SettingsDialog() {
           <SettingsIcon className="mr-2 h-4 w-4" /> 生成引擎设置
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto border-white/10 bg-[#12121c] text-white">
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto border-white/10 bg-[#12121c] text-white">
         <DialogHeader>
           <DialogTitle>生成引擎设置</DialogTitle>
         </DialogHeader>
@@ -164,60 +259,185 @@ function SettingsDialog() {
           <div className="flex items-center justify-between rounded-lg bg-white/5 p-3">
             <div>
               <div className="font-medium">运行模式</div>
-              <div className="text-xs text-white/40">
-                演示模式无需显卡即可体验完整流程;本地模式对接你的 ComfyUI
-              </div>
+              <div className="text-xs text-white/40">演示模式体验流程;真实生成使用本地 ComfyUI 或 MiniMax 云端 H3</div>
             </div>
-            <Select
-              value={settings.mode}
-              onValueChange={(v) => setSettings({ mode: v as 'demo' | 'local' })}
-            >
-              <SelectTrigger className="w-32 border-white/10 bg-black/40">
-                <SelectValue />
-              </SelectTrigger>
+            <Select value={settings.mode} onValueChange={(v) => setSettings({ mode: v as 'demo' | 'local' })}>
+              <SelectTrigger className="w-32 border-white/10 bg-black/40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="demo">演示模式</SelectItem>
-                <SelectItem value="local">本地生成</SelectItem>
+                <SelectItem value="local">真实生成</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <Label>ComfyUI 地址(MiniMax H3)</Label>
-            <div className="flex gap-2">
-              <Input
-                value={settings.comfyUrl}
-                onChange={(e) => setSettings({ comfyUrl: e.target.value })}
-                className="border-white/10 bg-black/40"
-              />
-              <Button
-                variant="outline"
-                className="border-white/10 shrink-0"
-                onClick={async () => {
-                  setPing('检测中…')
-                  setPing((await pingComfy(settings.comfyUrl)) ? '✓ 连接成功' : '✗ 无法连接')
-                }}
+          <div className="space-y-3 rounded-lg border border-violet-500/20 bg-violet-500/[0.04] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <Label>视频生成渠道</Label>
+                <p className="mt-1 text-[11px] text-white/40">本地优先 ComfyUI MiniMax-H3(自动支持角色参考图 Ref2VA);无本地显卡时用云端</p>
+              </div>
+              <Select
+                value={settings.videoProvider}
+                onValueChange={(v) => { setSettings({ videoProvider: v as 'comfy' | 'minimax' }); setPing('') }}
               >
-                测试
-              </Button>
+                <SelectTrigger className="w-44 shrink-0 border-white/10 bg-black/40"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="comfy">ComfyUI 本地 H3</SelectItem>
+                  <SelectItem value="minimax">MiniMax 云端 H3</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            {ping && <div className="text-xs text-white/50">{ping}</div>}
+
+            {settings.videoProvider === 'comfy' ? (
+              <>
+                <div className="space-y-2">
+                  <Label>ComfyUI 地址</Label>
+                  <div className="flex gap-2">
+                    <Input value={settings.comfyUrl} onChange={(e) => setSettings({ comfyUrl: e.target.value })} className="border-white/10 bg-black/40" />
+                    <Button variant="outline" className="shrink-0 border-white/10" onClick={async () => {
+                      setPing('检测中…')
+                      const r = await pingComfy(settings.comfyUrl)
+                      setPing(r.ok ? `✓ ${r.detail}` : `✗ ${r.detail}`)
+                    }}>测试连接</Button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 rounded bg-black/25 p-2.5">
+                  <div>
+                    <div className="text-xs font-medium text-white/80">工作流模式</div>
+                    <div className="text-[11px] text-white/40">
+                      内置模式直接适配本地 MiniMax-H3(含 SLA + LowVRAM + 角色图 Ref2VA 锁脸)
+                    </div>
+                  </div>
+                  <Select
+                    value={settings.comfyWorkflowMode}
+                    onValueChange={(v) => setSettings({ comfyWorkflowMode: v as 'minimax-h3-auto' | 'custom' })}
+                  >
+                    <SelectTrigger className="w-48 shrink-0 border-white/10 bg-black/40 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="minimax-h3-auto">内置 MiniMax-H3 (自动)</SelectItem>
+                      <SelectItem value="custom">自定义 API JSON 模板</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {settings.comfyWorkflowMode === 'minimax-h3-auto' ? (
+                  <div className="space-y-2 rounded border border-white/10 bg-black/20 p-2.5 text-xs">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">H3 采样步数:{settings.comfyH3Steps}</Label>
+                        <Input
+                          type="range"
+                          min={2}
+                          max={12}
+                          value={settings.comfyH3Steps}
+                          onChange={(e) => setSettings({ comfyH3Steps: Number(e.target.value) })}
+                          className="border-white/10 bg-black/40"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">参考图分辨率策略</Label>
+                        <Select
+                          value={settings.comfyRefImageSize}
+                          onValueChange={(v) => setSettings({ comfyRefImageSize: v as 'match' | 'max' })}
+                        >
+                          <SelectTrigger className="h-8 border-white/10 bg-black/40 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="match">match (16GB 显存推荐)</SelectItem>
+                            <SelectItem value="max">max (最高一致性,更慢)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedH3((v) => !v)}
+                      className="text-[11px] text-violet-300/80 hover:text-violet-200"
+                    >
+                      {showAdvancedH3 ? '收起模型文件名配置 ▲' : '展开本地模型文件名配置 ▼'}
+                    </button>
+                    {showAdvancedH3 && (
+                      <div className="grid grid-cols-1 gap-2 pt-1">
+                        <Input value={settings.comfyH3Unet} onChange={(e) => setSettings({ comfyH3Unet: e.target.value })} placeholder="UNET 模型文件名" className="h-8 border-white/10 bg-black/40 font-mono text-[11px]" />
+                        <Input value={settings.comfyH3Clip} onChange={(e) => setSettings({ comfyH3Clip: e.target.value })} placeholder="CLIP 模型文件名" className="h-8 border-white/10 bg-black/40 font-mono text-[11px]" />
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input value={settings.comfyH3VideoVae} onChange={(e) => setSettings({ comfyH3VideoVae: e.target.value })} placeholder="Video VAE" className="h-8 border-white/10 bg-black/40 font-mono text-[11px]" />
+                          <Input value={settings.comfyH3AudioVae} onChange={(e) => setSettings({ comfyH3AudioVae: e.target.value })} placeholder="Audio VAE" className="h-8 border-white/10 bg-black/40 font-mono text-[11px]" />
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-[11px] leading-4 text-white/40">
+                      出镜角色有设定图时自动上传并切换至 <code className="text-violet-300">MiniMaxH3ReferenceToVideo</code> + <code className="text-violet-300">&lt;Picture i&gt;</code> 锁脸; 无设定图时自动使用 T2VA。
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>视频工作流(API 格式 JSON)</Label>
+                      <Input
+                        type="file"
+                        accept=".json,application/json"
+                        className="h-8 w-44 cursor-pointer border-white/10 bg-black/40 text-xs file:mr-2 file:border-0 file:bg-violet-600 file:text-white"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0]
+                          if (!file) return
+                          try {
+                            const text = await file.text()
+                            JSON.parse(text)
+                            setSettings({ workflowTemplate: text })
+                            setPing(`✓ 已导入 ${file.name}`)
+                          } catch { setPing('✗ 工作流不是合法 JSON') }
+                          e.target.value = ''
+                        }}
+                      />
+                    </div>
+                    <Textarea
+                      value={settings.workflowTemplate}
+                      onChange={(e) => setSettings({ workflowTemplate: e.target.value })}
+                      placeholder='粘贴 ComfyUI API 格式 JSON。可用 "{{prompt}}" "{{seed}}" "{{frames}}" "{{steps}}" "{{width}}" "{{height}}" "{{ref_image_1}}" 占位符。'
+                      className="min-h-[110px] resize-y border-white/10 bg-black/40 font-mono text-[11px] leading-4 placeholder:text-white/25"
+                    />
+                    <p className="text-[11px] leading-4 text-white/40">需包含 SaveVideo / VHS Video Combine 保存节点;完成后会自动缓存成片到本地。</p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1.5">
+                    <Label>接口地址</Label>
+                    <Input value={settings.minimaxApiBase} onChange={(e) => setSettings({ minimaxApiBase: e.target.value })} className="border-white/10 bg-black/40 text-xs" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>模型</Label>
+                    <Input value={settings.minimaxModel} onChange={(e) => setSettings({ minimaxModel: e.target.value })} className="border-white/10 bg-black/40 text-xs" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>MiniMax API Key</Label>
+                  <Input type="password" value={settings.minimaxApiKey} onChange={(e) => setSettings({ minimaxApiKey: e.target.value })} placeholder="只保存在本机,用于创建和查询视频任务" className="border-white/10 bg-black/40" />
+                </div>
+                <div className="flex items-center justify-between rounded bg-black/25 p-2.5">
+                  <span className="text-xs text-white/65">生成原生音频</span>
+                  <Switch checked={settings.minimaxGenerateAudio} onCheckedChange={(v) => setSettings({ minimaxGenerateAudio: v })} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" className="border-white/10" onClick={async () => {
+                    setPing('检查中…')
+                    setPing((await checkMiniMaxConfig(settings)).detail)
+                  }}>检查配置</Button>
+                  <span className="text-[11px] leading-4 text-amber-200/60">云端按 MiniMax 平台规则计费;检查配置不会创建视频任务。</span>
+                </div>
+              </>
+            )}
+            {ping && <div className="text-xs leading-5 text-white/55">{ping}</div>}
           </div>
 
-          <div className="space-y-2">
-            <Label>视频生成工作流(API 格式 JSON)</Label>
-            <Textarea
-              value={settings.workflowTemplate}
-              onChange={(e) => setSettings({ workflowTemplate: e.target.value })}
-              placeholder='在 ComfyUI 里搭好 H3 工作流后,点「保存(API 格式)」导出 JSON 粘贴到这里。用占位符标记参数:"{{prompt}}" "{{seed}}" "{{frames}}" "{{steps}}" "{{width}}" "{{height}}"'
-              className="min-h-[110px] resize-y border-white/10 bg-black/40 font-mono text-[11px] leading-4 placeholder:text-white/25"
-            />
-            <p className="text-[11px] leading-4 text-white/35">
-              工作流里需要包含视频保存节点(如 VHS Video Combine),渲染完成后软件会自动取回视频播放。
-            </p>
-          </div>
-
-          {/* 角色设定图生成渠道 */}
+          {/* 角色设定图生成渠道(已修复 builtin 下误渲染 cloudapi 输入框的问题) */}
           <div className="space-y-2 rounded-lg border border-white/10 p-3">
             <div className="flex items-center justify-between">
               <Label>角色设定图(三视图)生成渠道</Label>
@@ -237,17 +457,18 @@ function SettingsDialog() {
             </div>
             {settings.imageProvider === 'builtin' && (
               <p className="text-[11px] leading-4 text-white/40">
-                用软件自带的图像生成服务出图,无需任何配置。角色卡上点「生成三视图设定图」即可,约 1-2 分钟一张。
+                使用本机可选内置生图工具(通过环境变量 <code className="text-white/60">IMAGE_GEN_TOOL</code> / <code className="text-white/60">KIMI_API_KEY</code> 或本机托管环境自动探测)。如未配置可切换到 ComfyUI 或云端图像 API。
               </p>
             )}
-            {settings.imageProvider === 'comfy' ? (
+            {settings.imageProvider === 'comfy' && (
               <Textarea
                 value={settings.imageWorkflowTemplate}
                 onChange={(e) => setSettings({ imageWorkflowTemplate: e.target.value })}
                 placeholder='粘贴 ComfyUI 文生图工作流(API 格式 JSON),用 "{{prompt}}" "{{seed}}" "{{width}}" "{{height}}" "{{steps}}" 标记参数。建议 1024x1536 竖版三视图'
                 className="min-h-[80px] resize-y border-white/10 bg-black/40 font-mono text-[11px] leading-4 placeholder:text-white/25"
               />
-            ) : (
+            )}
+            {settings.imageProvider === 'cloudapi' && (
               <div className="grid grid-cols-3 gap-2">
                 <Input
                   value={settings.imageApiBase}
@@ -272,32 +493,32 @@ function SettingsDialog() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>LLM 接口地址</Label>
-              <Input
-                value={settings.llmBase}
-                onChange={(e) => setSettings({ llmBase: e.target.value })}
-                className="border-white/10 bg-black/40"
-              />
+          <div className="space-y-3 rounded-lg border border-white/10 p-3">
+            <div>
+              <Label>剧本改编与智能改稿 LLM(OpenAI 兼容接口)</Label>
+              <p className="mt-1 text-[11px] text-white/40">真实生成模式下,剧本分镜、角色抽取、设定修改和反馈重写提示词都会调用此 LLM;演示模式使用本地规则。</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>接口地址(含 /v1)</Label>
+                <Input value={settings.llmBase} onChange={(e) => setSettings({ llmBase: e.target.value })} className="border-white/10 bg-black/40" />
+              </div>
+              <div className="space-y-2">
+                <Label>模型名</Label>
+                <Input value={settings.llmModel} onChange={(e) => setSettings({ llmModel: e.target.value })} className="border-white/10 bg-black/40" />
+              </div>
             </div>
             <div className="space-y-2">
-              <Label>模型名</Label>
-              <Input
-                value={settings.llmModel}
-                onChange={(e) => setSettings({ llmModel: e.target.value })}
-                className="border-white/10 bg-black/40"
-              />
+              <Label>API Key(本地 Ollama 可留空)</Label>
+              <Input type="password" value={settings.llmKey} onChange={(e) => setSettings({ llmKey: e.target.value })} className="border-white/10 bg-black/40" />
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label>LLM API Key(本地可留空)</Label>
-            <Input
-              type="password"
-              value={settings.llmKey}
-              onChange={(e) => setSettings({ llmKey: e.target.value })}
-              className="border-white/10 bg-black/40"
-            />
+            <div className="flex items-center gap-3">
+              <Button variant="outline" className="border-white/10" onClick={async () => {
+                setLlmPing('正在发送极短测试请求…')
+                setLlmPing((await pingLlm(settings)).detail)
+              }}>测试 LLM</Button>
+              {llmPing && <span className="text-xs text-white/50">{llmPing}</span>}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -311,17 +532,19 @@ function SettingsDialog() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="480x864">480p(快)</SelectItem>
-                  <SelectItem value="720x1280">720p(推荐)</SelectItem>
-                  <SelectItem value="1080x1920">1080p(慢)</SelectItem>
+                  <SelectItem value="480x864">480×864 竖屏(快/省显存)</SelectItem>
+                  <SelectItem value="576x1024">576×1024 竖屏(5080 16GB 推荐)</SelectItem>
+                  <SelectItem value="736x1280">736×1280 竖屏(高清)</SelectItem>
+                  <SelectItem value="960x544">960×544 横屏 16:9(0.5MP)</SelectItem>
+                  <SelectItem value="1088x1920">1088×1920 竖屏(慢)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>采样步数:{settings.steps}</Label>
+              <Label>自定义工作流采样步数:{settings.steps}</Label>
               <Input
                 type="range"
-                min={10}
+                min={4}
                 max={50}
                 value={settings.steps}
                 onChange={(e) => setSettings({ steps: Number(e.target.value) })}
@@ -334,7 +557,7 @@ function SettingsDialog() {
             <div>
               <div className="font-medium">AI 自动微调</div>
               <div className="text-xs text-white/40">
-                反馈命中规则时自动修正提示词(如"脸变了"→加强角色一致性)
+                真实模式下由 LLM 按反馈重写提示词;演示模式使用内置规则自动补全一致性约束
               </div>
             </div>
             <Switch

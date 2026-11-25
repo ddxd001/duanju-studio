@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { ArrowRight, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react'
 
 export default function ScriptPage() {
-  const { project, adaptScript, updateShotField, setStep } = useStore()
+  const { project, adaptScript, updateShotField, setStep, adapting, adaptError } = useStore()
   const [openEp, setOpenEp] = useState<string | null>(project.episodes[0]?.id ?? null)
 
   if (project.episodes.length === 0) {
@@ -30,17 +30,20 @@ export default function ScriptPage() {
           <Button
             variant="outline"
             className="border-white/10 text-white/70"
+            disabled={adapting}
             onClick={() => {
-              if (confirm('重新改编会清空现有分镜与角色,确定?')) adaptScript()
+              if (confirm('重新改编会清空现有分镜与角色,确定?')) void adaptScript()
             }}
           >
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> 重新改编
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${adapting ? 'animate-spin' : ''}`} />
+            {adapting ? '改编中…' : '重新改编'}
           </Button>
           <Button className="bg-violet-600 hover:bg-violet-500" onClick={() => setStep('characters')}>
             进入角色工坊 <ArrowRight className="ml-1 h-4 w-4" />
           </Button>
         </div>
       </div>
+      {adaptError && <div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-300">{adaptError}</div>}
 
       <div className="space-y-3">
         {project.episodes.map((ep) => {

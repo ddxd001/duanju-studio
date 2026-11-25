@@ -1,4 +1,4 @@
-// ④ 分镜板(核心):每个镜头 = 预览 + 状态 + 反馈重拍 + 版本回溯
+// ④ 分镜板(核心):每个镜头 = 预览 + 状态 + 参考图锁脸标记 + 反馈重拍 + 版本回溯
 import { useMemo, useState } from 'react'
 import { useStore, getStyle } from '@/lib/store'
 import MockClip from '@/components/MockClip'
@@ -14,7 +14,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
-import { Check, Clapperboard, Code2, Film } from 'lucide-react'
+import { Check, Clapperboard, Code2, Film, UserCheck, X } from 'lucide-react'
 import { EmptyHint } from './ScriptPage'
 import type { Shot, ShotStatus } from '@/types'
 
@@ -30,6 +30,7 @@ export default function StoryboardPage() {
   const {
     project,
     renderShot,
+    cancelShot,
     approveShot,
     approveAllReview,
     rollbackShot,
@@ -64,7 +65,7 @@ export default function StoryboardPage() {
         <div>
           <h2 className="text-xl font-bold">分镜板</h2>
           <p className="mt-1 text-sm text-white/50">
-            哪个镜头不满意,就在卡片下面直接说 —— 每一次重拍都会留档,随时回滚。
+            哪个镜头不满意,就在卡片下面直接说 —— 每一次重拍都会留档,随时回滚。已生成立绘的角色会自动作为参考图注入视频生成。
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -107,7 +108,8 @@ export default function StoryboardPage() {
             shot={sh}
             episodeTitle={project.episodes.find((e) => e.id === sh.episodeId)?.title ?? ''}
             stylePalette={style}
-            onRender={(fb) => renderShot(sh.id, fb)}
+            onRender={(fb) => void renderShot(sh.id, fb)}
+            onCancel={() => cancelShot(sh.id)}
             onApprove={() => approveShot(sh.id)}
             onRollback={(vid) => rollbackShot(sh.id, vid)}
           />
@@ -161,6 +163,7 @@ function ShotCard({
   episodeTitle,
   stylePalette,
   onRender,
+  onCancel,
   onApprove,
   onRollback,
 }: {
@@ -168,6 +171,7 @@ function ShotCard({
   episodeTitle: string
   stylePalette: ReturnType<typeof getStyle>
   onRender: (feedback?: string) => void
+  onCancel: () => void
   onApprove: () => void
   onRollback: (versionId: string) => void
 }) {
@@ -212,10 +216,18 @@ function ShotCard({
             <span className="text-[11px]">开拍此镜头</span>
           </button>
         )}
-        {shot.status === 'rendering' && (
+        {busy && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-lg bg-black/70">
-            <Progress value={shot.progress} className="w-3/4 h-1.5" />
-            <span className="text-[10px] text-white/70">{Math.floor(shot.progress)}%</span>
+            <Progress value={shot.status === 'queued' ? 0 : shot.progress} className="h-1.5 w-3/4" />
+            <span className="text-[10px] text-white/70">
+              {shot.status === 'queued' ? '排队中…' : `${Math.floor(shot.progress)}%`}
+            </span>
+            <button
+              onClick={onCancel}
+              className="mt-1 flex items-center gap-0.5 rounded bg-white/10 px-2 py-0.5 text-[10px] text-white/70 hover:bg-red-500/30 hover:text-red-200"
+            >
+              <X className="h-3 w-3" /> 取消
+            </button>
           </div>
         )}
       </div>
@@ -224,7 +236,15 @@ function ShotCard({
         {shot.title}
       </div>
 
-      {/* 本地模式渲染失败提示 */}
+      {/* 角色参考图锁定标记 */}
+      {current?.refCharacters && current.refCharacters.length > 0 && (
+        <div className="mt-1 flex items-center gap-1 truncate text-[10px] text-emerald-300/80">
+          <UserCheck className="h-3 w-3 shrink-0" />
+          <span className="truncate">参考图锁脸:{current.refCharacters.join('、')}</span>
+        </div>
+      )}
+
+      {/* 渲染失败提示 */}
       {shot.renderError && (
         <div className="mt-1.5 rounded bg-red-500/10 p-1.5 text-[10px] leading-4 text-red-300">
           渲染失败:{shot.renderError}
